@@ -1,4 +1,4 @@
-import prisma from "../../config/prisma.js";
+import prisma from "../../config/prisma";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 
