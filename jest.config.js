@@ -1,4 +1,3 @@
-// src/jest.config.ts (or jest.config.js in root)
 import { createDefaultPreset } from "ts-jest";
 
 /** @type {import("jest").Config} */
@@ -13,4 +12,5 @@ export default {
   moduleFileExtensions: ["ts", "js", "json", "node"],
   extensionsToTreatAsEsm: [".ts"],
   roots: ["<rootDir>/src"],
+  testTimeout: 30000, // allow Prisma DB queries
 };
