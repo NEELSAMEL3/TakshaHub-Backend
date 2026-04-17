@@ -1,16 +1,31 @@
-import jwt from 'jsonwebtoken';
-const JWT_SECRET = process.env.JWT_SECRET || "your_secret_key";
-export const authMiddleware = (req, res, next) => {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token)
-        return res.status(401).json({ error: "Unauthorized" });
-    try {
-        const decoded = jwt.verify(token, JWT_SECRET);
-        req.user = decoded; // Attach JWT payload to request
-        next();
+import jwt from "jsonwebtoken";
+function getJwtSecret() {
+    const secret = process.env.JWT_ACCESS_SECRET;
+    if (!secret) {
+        throw new Error("JWT_ACCESS_SECRET is not defined");
     }
-    catch (err) {
-        res.status(401).json({ error: "Invalid token" });
+    return secret;
+}
+export const authMiddleware = (req, res, next) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) {
+        return res.status(401).json({ message: "Unauthorized" });
+    }
+    const [type, token] = authHeader.split(" ");
+    if (type !== "Bearer" || !token) {
+        return res.status(401).json({ message: "Invalid token format" });
+    }
+    try {
+        const decoded = jwt.verify(token, getJwtSecret());
+        req.user = {
+            userId: decoded.userId,
+            email: decoded.email,
+            ...(decoded.role ? { role: decoded.role } : {}),
+        };
+        return next();
+    }
+    catch {
+        return res.status(401).json({ message: "Invalid or expired token" });
     }
 };
 //# sourceMappingURL=auth.middleware.js.map
