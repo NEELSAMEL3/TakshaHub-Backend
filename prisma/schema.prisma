@@ -6,53 +6,165 @@ datasource db {
   provider = "postgresql"
 }
 
+--------------- USER ----------------
 
-model Admin {
-  id                    Int      @id @default(autoincrement())
-  schoolName            String
-  schoolType            SchoolType
-  board                 BoardType
-  city                  String
-  state                 String
-  email                 String   @unique
-  websiteLink           String?
-  fullName              String
-  password              String
-  phoneNumber           String
-  verificationDocLink   String
-  createdAt             DateTime @default(now())
+model User {
+  id           BigInt  @id @default(autoincrement())
+  fullName     String  @db.VarChar(255)
+  email        String  @unique @db.VarChar(255)
+  passwordHash String  @db.VarChar(255)
+  phoneNumber  String? @db.VarChar(20)
 
-  members               Member[]   // 👈 relation
+  tokenVersion Int @default(0)
+
+  isVerified Boolean @default(false)
+
+  lastActiveSchoolId BigInt?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  refreshTokens RefreshToken[]
+  members       Member[]
+  sessions      Session[]
+  devices       Device[]
+}
+
+---------------- SCHOOL ----------------
+
+model School {
+  id          BigInt      @id @default(autoincrement())
+  name        String      @db.VarChar(255)
+  type        SchoolType
+  board       SchoolBoard
+  city        String      @db.VarChar(100)
+  state       String      @db.VarChar(100)
+  website     String?     @db.VarChar(255)
+  udiseNumber String      @unique @db.VarChar(50)
+
+  isVerified Boolean @default(false)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  members Member[]
+}
+
+/**
+ * ---------------- MEMBER ----------------
+ */
+
+model Member {
+  id   BigInt     @id @default(autoincrement())
+  role MemberRole
+
+  userId   BigInt
+  schoolId BigInt
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, schoolId])
+  @@index([userId])
+  @@index([schoolId])
+}
+
+/**-------------- SESSION ----------------✅ Updated for multi-school login/
+
+model Session {
+  id     String @id @default(cuid())
+  userId BigInt
+
+  // ✅ NEW: school + role context
+  schoolId BigInt
+  memberId BigInt
+
+  ipAddress String? @db.VarChar(100)
+  userAgent String? @db.Text
+  device    String? @db.VarChar(255)
+
+  deviceId    String
+  fingerprint String?
+
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime @default(now())
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshTokens RefreshToken[]
+
+  @@index([userId])
+  @@index([schoolId])
+  @@index([memberId])
+}
+
+--------------- REFRESH TOKEN ----------------
+
+model RefreshToken {
+  id String @id @default(cuid())
+
+  userId    BigInt
+  tokenHash String @unique
+  sessionId String
+  familyId  String
+
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  revoked   Boolean  @default(false)
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([sessionId])
+  @@index([familyId])
+  @@index([userId, familyId])
+}
+
+---------------- DEVICE ----------------
+
+
+model Device {
+  id       String @id @default(cuid())
+  userId   BigInt
+  deviceId String
+
+  userAgent   String
+  ipAddress   String?
+  fingerprint String
+
+  lastSeenAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, deviceId])
+}
+
+---------------- ENUMS ----------------
+
+enum MemberRole {
+  ADMIN
+  TEACHER
+  STUDENT
+  STAFF
 }
 
 enum SchoolType {
-  PRIVATE
   PUBLIC
+  PRIVATE
+  OTHER
 }
 
-enum BoardType {
+enum SchoolBoard {
   CBSE
-  ISC
-  STATE_BOARD
-}
-
-model Member {
-  id           Int        @id @default(autoincrement())
-  fullName     String
-  email        String     @unique
-  password     String
-  phoneNumber  String
-  role         Role
-
-  adminId      Int
-  admin        Admin      @relation(fields: [adminId], references: [id])
-
-  createdAt    DateTime   @default(now())
-}
-
-enum Role {
-  CO_ADMIN
-  TEACHER
-  STUDENT
-  PARENT
+  ICSE
+  STATE
+  OTHER
 }
