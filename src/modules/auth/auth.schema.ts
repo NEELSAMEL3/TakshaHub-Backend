@@ -173,3 +173,21 @@ export const refreshTokenSchema = z.object({
 
 export type RefreshTokenPayload = z.infer<typeof refreshTokenSchema>;
 
+/* ============ REQUEST PASSWORD RESET SCHEMA ============ */
+
+export const requestPasswordResetSchema = z.object({
+  email: emailSchema,
+});
+
+export type RequestPasswordResetPayload = z.infer<typeof requestPasswordResetSchema>;
+
+/* ============ RESET PASSWORD SCHEMA ============ */
+
+export const resetPasswordSchema = z.object({
+  email: emailSchema,
+  otp: otpSchema,
+  newPassword: passwordSchema,
+});
+
+export type ResetPasswordPayload = z.infer<typeof resetPasswordSchema>;
+

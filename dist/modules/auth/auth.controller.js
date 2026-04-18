@@ -7,10 +7,10 @@ import { AppError } from "../../common/errors/AppError";
 export class AuthController {
 }
 _a = AuthController;
-/* ---------------- REGISTER ---------------- */
+/* ============ REGISTER ============ */
 AuthController.register = asyncHandler(async (req, res) => {
     const { fullName, email, password, phoneNumber, school } = req.body;
-    logger.info("AuthController.register started", { email });
+    logger.info("Auth: Register started", { email });
     const result = await AuthService.register({
         fullName,
         email,
@@ -18,29 +18,54 @@ AuthController.register = asyncHandler(async (req, res) => {
         phoneNumber,
         school,
     });
-    logger.info("AuthController.register success", {
-        userId: result.user.id,
-    });
+    logger.info("Auth: Register success", { email });
     return res.status(201).json({
         success: true,
-        message: "User registered successfully",
+        message: result.message,
         data: result,
     });
 });
-/* ---------------- LOGIN ---------------- */
+/* ============ VERIFY OTP ============ */
+AuthController.verifyOtp = asyncHandler(async (req, res) => {
+    const { email, otp } = req.body;
+    logger.info("Auth: Verify OTP started", { email });
+    const result = await AuthService.verifyOtp(email, otp);
+    logger.info("Auth: Verify OTP success", { email });
+    return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: result,
+    });
+});
+/* ============ RESEND OTP ============ */
+AuthController.resendOtp = asyncHandler(async (req, res) => {
+    const { email } = req.body;
+    logger.info("Auth: Resend OTP started", { email });
+    const result = await AuthService.resendOtp(email);
+    logger.info("Auth: Resend OTP success", { email });
+    return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: result,
+    });
+});
+/* ============ LOGIN ============ */
 AuthController.login = asyncHandler(async (req, res) => {
     const { email, password, schoolId } = req.body;
-    logger.info("AuthController.login started", { email });
-    // ✅ REQUIRED META
+    const deviceId = req.get("x-device-id");
+    const userAgent = req.get("user-agent");
+    if (!deviceId || !userAgent) {
+        throw new AppError("Missing required headers (x-device-id, user-agent)", 400);
+    }
+    logger.info("Auth: Login started", { email });
     const meta = {
-        ip: req.ip,
-        userAgent: req.headers["user-agent"] || "unknown",
-        deviceId: req.headers["x-device-id"], // 🔥 IMPORTANT
+        ip: req.ip ?? "0.0.0.0",
+        userAgent,
+        deviceId,
     };
     const result = await AuthService.login({ email, password, schoolId }, meta);
-    // ✅ set refresh cookie
     setRefreshCookie(res, result.refreshToken);
-    logger.info("AuthController.login success", { email });
+    logger.info("Auth: Login success", { email });
     return res.status(200).json({
         success: true,
         message: "Login successful",
@@ -51,42 +76,87 @@ AuthController.login = asyncHandler(async (req, res) => {
         },
     });
 });
-/* ---------------- REFRESH ---------------- */
+/* ============ REFRESH TOKEN ============ */
 AuthController.refresh = asyncHandler(async (req, res) => {
-    logger.info("AuthController.refresh started");
     const refreshToken = req.cookies.refreshToken;
     if (!refreshToken) {
-        throw new AppError("Unauthorized", 401);
+        throw new AppError("Refresh token not found", 401);
     }
+    const deviceId = req.get("x-device-id");
+    const userAgent = req.get("user-agent");
+    if (!deviceId || !userAgent) {
+        throw new AppError("Missing required headers", 400);
+    }
+    logger.info("Auth: Refresh token started");
     const meta = {
-        ip: req.ip,
-        userAgent: req.headers["user-agent"] || "unknown",
-        deviceId: req.headers["x-device-id"], // 🔥 REQUIRED
+        ip: req.ip ?? "0.0.0.0",
+        userAgent,
+        deviceId,
     };
     const tokens = await AuthService.refresh(refreshToken, meta);
-    // ✅ rotate cookie
     setRefreshCookie(res, tokens.refreshToken);
-    logger.info("AuthController.refresh success");
+    logger.info("Auth: Refresh token success");
     return res.status(200).json({
         success: true,
-        message: "Token refreshed",
+        message: "Token refreshed successfully",
         data: {
             accessToken: tokens.accessToken,
         },
     });
 });
-/* ---------------- LOGOUT ---------------- */
+/* ============ LOGOUT ============ */
 AuthController.logout = asyncHandler(async (req, res) => {
-    logger.info("AuthController.logout started");
     const refreshToken = req.cookies.refreshToken;
+    logger.info("Auth: Logout started");
     if (refreshToken) {
         await AuthService.logout(refreshToken);
     }
     clearRefreshCookie(res);
-    logger.info("AuthController.logout success");
+    logger.info("Auth: Logout success");
     return res.status(200).json({
         success: true,
         message: "Logged out successfully",
+    });
+});
+/* ============ LOGOUT ALL DEVICES ============ */
+AuthController.logoutAll = asyncHandler(async (req, res) => {
+    const userId = req.user?.userId;
+    if (!userId) {
+        throw new AppError("Unauthorized", 401);
+    }
+    logger.info("Auth: Logout all devices started", { userId });
+    await AuthService.logoutAll(userId);
+    clearRefreshCookie(res);
+    logger.info("Auth: Logout all devices success", { userId });
+    return res.status(200).json({
+        success: true,
+        message: "Logged out from all devices successfully",
+    });
+});
+/* ============ REQUEST PASSWORD RESET ============ */
+AuthController.requestPasswordReset = asyncHandler(async (req, res) => {
+    const { email } = req.body;
+    logger.info("Auth: Request password reset started", { email });
+    const result = await AuthService.requestPasswordReset(email);
+    logger.info("Auth: Request password reset success", { email });
+    return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: {
+            expirySeconds: result.expirySeconds,
+        },
+    });
+});
+/* ============ RESET PASSWORD ============ */
+AuthController.resetPassword = asyncHandler(async (req, res) => {
+    const { email, otp, newPassword } = req.body;
+    logger.info("Auth: Reset password started", { email });
+    const result = await AuthService.resetPassword(email, otp, newPassword);
+    logger.info("Auth: Reset password success", { email });
+    clearRefreshCookie(res);
+    return res.status(200).json({
+        success: true,
+        message: result.message,
     });
 });
 //# sourceMappingURL=auth.controller.js.map

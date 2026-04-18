@@ -10,6 +10,10 @@ import { AppError } from "../../common/errors/AppError";
 
 export class AuthController {
   /* ============ REGISTER ============ */
+  /**
+   * Register a new user and create the associated school and membership.
+   * Sends a verification OTP to the supplied email.
+   */
   static register = asyncHandler(async (req: Request, res: Response) => {
     const { fullName, email, password, phoneNumber, school } = req.body;
 
@@ -33,6 +37,9 @@ export class AuthController {
   });
 
   /* ============ VERIFY OTP ============ */
+  /**
+   * Verify an email OTP and mark the user account as verified.
+   */
   static verifyOtp = asyncHandler(async (req: Request, res: Response) => {
     const { email, otp } = req.body;
 
@@ -50,6 +57,9 @@ export class AuthController {
   });
 
   /* ============ RESEND OTP ============ */
+  /**
+   * Resend the verification OTP while enforcing resend limits.
+   */
   static resendOtp = asyncHandler(async (req: Request, res: Response) => {
     const { email } = req.body;
 
@@ -67,6 +77,9 @@ export class AuthController {
   });
 
   /* ============ LOGIN ============ */
+  /**
+   * Authenticate a user, record device metadata, and issue auth tokens.
+   */
   static login = asyncHandler(async (req: Request, res: Response) => {
     const { email, password, schoolId } = req.body;
 
@@ -103,6 +116,9 @@ export class AuthController {
   });
 
   /* ============ REFRESH TOKEN ============ */
+  /**
+   * Refresh the access token using the refresh token stored in cookies.
+   */
   static refresh = asyncHandler(async (req: Request, res: Response) => {
     const refreshToken = req.cookies.refreshToken;
 
@@ -141,6 +157,9 @@ export class AuthController {
   });
 
   /* ============ LOGOUT ============ */
+  /**
+   * Invalidate the current refresh token and clear the refresh cookie.
+   */
   static logout = asyncHandler(async (req: Request, res: Response) => {
     const refreshToken = req.cookies.refreshToken;
 
@@ -161,6 +180,9 @@ export class AuthController {
   });
 
   /* ============ LOGOUT ALL DEVICES ============ */
+  /**
+   * Revoke all sessions and tokens for the authenticated user.
+   */
   static logoutAll = asyncHandler(async (req: Request, res: Response) => {
     const userId = (req as any).user?.userId;
 
@@ -179,6 +201,49 @@ export class AuthController {
     return res.status(200).json({
       success: true,
       message: "Logged out from all devices successfully",
+    });
+  });
+
+  /* ============ REQUEST PASSWORD RESET ============ */
+  /**
+   * Request a password reset OTP for the provided email address.
+   */
+  static requestPasswordReset = asyncHandler(async (req: Request, res: Response) => {
+    const { email } = req.body;
+
+    logger.info("Auth: Request password reset started", { email });
+
+    const result = await AuthService.requestPasswordReset(email);
+
+    logger.info("Auth: Request password reset success", { email });
+
+    return res.status(200).json({
+      success: true,
+      message: result.message,
+      data: {
+        expirySeconds: result.expirySeconds,
+      },
+    });
+  });
+
+  /* ============ RESET PASSWORD ============ */
+  /**
+   * Reset the user's password after validating the provided OTP.
+   */
+  static resetPassword = asyncHandler(async (req: Request, res: Response) => {
+    const { email, otp, newPassword } = req.body;
+
+    logger.info("Auth: Reset password started", { email });
+
+    const result = await AuthService.resetPassword(email, otp, newPassword);
+
+    logger.info("Auth: Reset password success", { email });
+
+    clearRefreshCookie(res);
+
+    return res.status(200).json({
+      success: true,
+      message: result.message,
     });
   });
 }

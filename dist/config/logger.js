@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import env from "./env";
 import { createLogger, format, transports, config } from "winston";
 import DailyRotateFile from "winston-daily-rotate-file";
 const { combine, timestamp, printf, colorize, errors, json } = format;
@@ -42,7 +43,7 @@ const createFileTransport = (file, level) => new DailyRotateFile({
     filename: path.join(logDir, file),
     datePattern: "YYYY-MM-DD",
     maxFiles: "14d",
-    level,
+    level: level ?? "info",
     handleExceptions: true,
     handleRejections: true,
 });
@@ -57,17 +58,17 @@ const rejectionFile = createFileTransport("rejections.log");
  * Base logger
  */
 const logger = createLogger({
-    level: process.env.LOG_LEVEL ?? "info",
+    level: env.LOG_LEVEL ?? "info",
     format: fileFormat,
     exceptionHandlers: [exceptionFile],
     rejectionHandlers: [rejectionFile],
     transports: [],
 });
-const env = process.env.NODE_ENV;
+const currentEnv = env.NODE_ENV;
 /**
  * Production setup
  */
-if (env === "production") {
+if (currentEnv === "production") {
     logger.add(errorFile);
     logger.add(combinedFile);
     // optional: minimal console logs in prod
@@ -81,7 +82,7 @@ if (env === "production") {
 /**
  * Test setup
  */
-else if (env === "test") {
+else if (currentEnv === "test") {
     logger.add(createFileTransport("test.log"));
 }
 /**
