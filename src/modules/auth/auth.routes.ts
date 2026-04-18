@@ -5,7 +5,9 @@ import {
   loginSchema,
   verifyOtpSchema,
   resendOtpSchema,
-} from "../../schemas/auth.schema";
+  requestPasswordResetSchema,
+  resetPasswordSchema,
+} from "./auth.schema";
 import {
   registerRateLimiter,
   loginRateLimiter,
@@ -133,6 +135,30 @@ router.post(
   requiredAuth,
   requireSession,
   AuthController.logoutAll
+);
+
+/* ============ REQUEST PASSWORD RESET ============ */
+/**
+ * POST /auth/forgot-password
+ * Request password reset by sending OTP to email
+ */
+router.post(
+  "/forgot-password",
+  otpResendRateLimiter,
+  validate(requestPasswordResetSchema),
+  AuthController.requestPasswordReset
+);
+
+/* ============ RESET PASSWORD ============ */
+/**
+ * POST /auth/reset-password
+ * Reset password using OTP from email
+ */
+router.post(
+  "/reset-password",
+  otpVerifyRateLimiter,
+  validate(resetPasswordSchema),
+  AuthController.resetPassword
 );
 
 /* ============ HEALTH CHECK ============ */

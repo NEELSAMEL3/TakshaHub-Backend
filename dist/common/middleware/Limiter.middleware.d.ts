@@ -1,11 +1,41 @@
-import Redis from "ioredis";
 import type { Request, Response, NextFunction } from "express";
-export declare const redis: Redis;
-export declare const loginLimiter: (req: Request, res: Response, next: NextFunction) => Promise<void>;
-export declare const loginEmailLimiter: (req: Request, res: Response, next: NextFunction) => Promise<void>;
-export declare const authLimiter: (req: Request, res: Response, next: NextFunction) => Promise<void>;
-export declare const refreshLimiter: (req: Request, res: Response, next: NextFunction) => Promise<void>;
-export declare const globalLimiter: (req: Request, res: Response, next: NextFunction) => Promise<void>;
-export declare const burstLimiter: (req: Request, res: Response, next: NextFunction) => Promise<void>;
-export declare const rateLimiterMiddleware: ((req: Request, res: Response, next: NextFunction) => Promise<void>)[];
+export declare const rateLimitMiddlewares: {
+    login: ((req: Request, res: Response, next: NextFunction) => Promise<void>)[];
+    register: (req: Request, res: Response, next: NextFunction) => Promise<void>;
+    otpVerify: (req: Request, res: Response, next: NextFunction) => Promise<void>;
+    otpResend: (req: Request, res: Response, next: NextFunction) => Promise<void>;
+    refresh: (req: Request, res: Response, next: NextFunction) => Promise<void>;
+    auth: (req: Request, res: Response, next: NextFunction) => Promise<void>;
+    burst: (req: Request, res: Response, next: NextFunction) => Promise<void>;
+    global: (req: Request, res: Response, next: NextFunction) => Promise<void>;
+};
+/**
+ * Global rate limiter to apply on all routes
+ */
+export declare const globalRateLimiter: ((req: Request, res: Response, next: NextFunction) => Promise<void>)[];
+/**
+ * Auth endpoints protection
+ */
+export declare const authRateLimiter: ((req: Request, res: Response, next: NextFunction) => Promise<void>)[];
+/**
+ * Login protection (stronger)
+ */
+export declare const loginRateLimiter: ((req: Request, res: Response, next: NextFunction) => Promise<void>)[];
+/**
+ * Register protection
+ */
+export declare const registerRateLimiter: ((req: Request, res: Response, next: NextFunction) => Promise<void>)[];
+/**
+ * OTP verification protection
+ */
+export declare const otpVerifyRateLimiter: ((req: Request, res: Response, next: NextFunction) => Promise<void>)[];
+/**
+ * OTP resend protection
+ */
+export declare const otpResendRateLimiter: ((req: Request, res: Response, next: NextFunction) => Promise<void>)[];
+/**
+ * Token refresh protection
+ */
+export declare const refreshRateLimiter: ((req: Request, res: Response, next: NextFunction) => Promise<void>)[];
+export default rateLimitMiddlewares;
 //# sourceMappingURL=Limiter.middleware.d.ts.map

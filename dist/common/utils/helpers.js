@@ -1,4 +1,5 @@
-import UAParser from "ua-parser-js";
+import { UAParser } from "ua-parser-js"; // ✅ FIXED
+import crypto from "crypto";
 export const setRefreshCookie = (res, token) => {
     res.cookie("refreshToken", token, {
         httpOnly: true,
@@ -18,7 +19,7 @@ export const clearRefreshCookie = (res) => {
     });
 };
 export const getDeviceInfo = (userAgent) => {
-    const parser = new UAParser(userAgent);
+    const parser = new UAParser(userAgent); // ✅ works now
     const result = parser.getResult();
     return {
         device: result.device.vendor && result.device.model
@@ -26,5 +27,8 @@ export const getDeviceInfo = (userAgent) => {
             : result.os.name || "Unknown Device",
         browser: result.browser.name,
     };
+};
+export const generateVerificationToken = () => {
+    return crypto.randomBytes(32).toString("hex");
 };
 //# sourceMappingURL=helpers.js.map
