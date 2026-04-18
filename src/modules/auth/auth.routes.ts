@@ -18,8 +18,6 @@ import {
 import {
   requiredAuth,
   requireSession,
-  requireSchoolContext,
-  optionalAuth,
 } from "../../common/middleware/requireRole.middleware";
 import { AuthController } from "./auth.controller";
 import { AppError } from "../../common/errors/AppError";
