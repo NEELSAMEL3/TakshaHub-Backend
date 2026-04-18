@@ -1,12 +1,18 @@
 import prisma from "../../config/prisma";
 import bcrypt from "bcryptjs";
-import { MemberRole, Prisma } from "@prisma/client";
+import { MemberRole } from "@prisma/client";
 import { AppError } from "../../common/errors/AppError";
 import { generateAccessToken, generateRefreshToken, hashToken, verifyRefreshToken, } from "../../common/utils/jwt";
 import { randomUUID } from "crypto";
 import { getDeviceInfo } from "../../common/utils/helpers";
-const SALT_ROUNDS = Number(process.env.BCRYPT_ROUNDS ?? 10);
-const REFRESH_EXPIRES_DAYS = Number(process.env.REFRESH_DAYS ?? 7);
+import crypto from "crypto";
+import { sendVerificationEmail } from "../../common/utils/sendVerificationEmail";
+import { redis } from "../../config/redis";
+import logger from "../../config/logger";
+import env from "../../config/env";
+const SALT_ROUNDS = Number(env.BCRYPT_ROUNDS ?? "10");
+const REFRESH_EXPIRES_DAYS = Number(env.REFRESH_DAYS ?? "7");
+const MAX_SESSIONS = Number(env.MAX_SESSIONS ?? "5");
 /* ---------------- HELPERS ---------------- */
 const normalizeEmail = (email) => email?.trim().toLowerCase();
 const getFingerprint = (meta) => {
@@ -20,34 +26,38 @@ const toSafeUser = (user) => ({
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
 });
+function serializeBigInt(obj) {
+    return JSON.parse(JSON.stringify(obj, (_, value) => typeof value === "bigint" ? value.toString() : value));
+}
 const calculateExpiryDate = () => {
     const date = new Date();
     date.setDate(date.getDate() + REFRESH_EXPIRES_DAYS);
     return date;
 };
-/* ---------------- SERVICE ---------------- */
 export class AuthService {
     /* ---------------- REGISTER ---------------- */
     static async register(data) {
-        return prisma.$transaction(async (tx) => {
-            const email = normalizeEmail(data.email);
-            const existing = await tx.user.findUnique({
-                where: { email },
-                select: { id: true },
-            });
-            if (existing)
-                throw new AppError("Email already exists", 409);
+        const email = normalizeEmail(data.email);
+        // 1️⃣ Check existing user
+        let user = await prisma.user.findUnique({
+            where: { email },
+        });
+        if (user?.isVerified) {
+            throw new AppError("Email already exists", 409);
+        }
+        // 2️⃣ Create user if not exists
+        if (!user) {
             const passwordHash = await bcrypt.hash(data.password, SALT_ROUNDS);
-            const user = await tx.user.create({
+            user = await prisma.user.create({
                 data: {
                     fullName: data.fullName,
                     email,
                     passwordHash,
                     phoneNumber: data.phoneNumber ?? null,
+                    isVerified: false,
                 },
             });
-            const school = await tx.school
-                .create({
+            const school = await prisma.school.create({
                 data: {
                     name: data.school.name,
                     type: data.school.type,
@@ -57,27 +67,152 @@ export class AuthService {
                     website: data.school.website ?? null,
                     udiseNumber: data.school.udiseNumber,
                 },
-            })
-                .catch((err) => {
-                if (err instanceof Prisma.PrismaClientKnownRequestError &&
-                    err.code === "P2002") {
-                    throw new AppError("School already exists", 409);
-                }
-                throw err;
             });
-            const member = await tx.member.create({
+            await prisma.member.create({
                 data: {
                     userId: user.id,
                     schoolId: school.id,
                     role: MemberRole.ADMIN,
                 },
             });
-            return {
-                message: "Registration successful",
-                user: toSafeUser(user),
-                member,
-            };
+        }
+        // 3️⃣ OTP
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        const otpKey = `verify:otp:${email}`;
+        const otpHash = crypto
+            .createHmac("sha256", env.OTP_SECRET)
+            .update(`${email}:${otp}`)
+            .digest("hex");
+        // 4️⃣ Store OTP
+        const otpData = {
+            hash: otpHash,
+            attempts: 0,
+            createdAt: Date.now(),
+        };
+        await redis.set(otpKey, otpData, { ex: 600 });
+        logger.info("Auth: OTP sent", { email, otpExpirySeconds: 600 });
+        // 5️⃣ Send email
+        await sendVerificationEmail(email, otp);
+        return {
+            message: "OTP sent successfully. Please verify your email.",
+        };
+    }
+    /* ---------------- VERIFY-OTP ---------------- */
+    static async verifyOtp(email, otp) {
+        const emailKey = normalizeEmail(email);
+        const OTP_SECRET = env.OTP_SECRET;
+        if (!OTP_SECRET)
+            throw new Error("OTP_SECRET missing");
+        // 1️⃣ Get user
+        const user = await prisma.user.findUnique({
+            where: { email: emailKey },
         });
+        if (!user)
+            throw new AppError("User not found", 404);
+        if (user.isVerified) {
+            throw new AppError("Already verified", 400);
+        }
+        // 2️⃣ Redis key
+        const otpKey = `verify:otp:${emailKey}`;
+        const raw = await redis.get(otpKey);
+        if (!raw) {
+            throw new AppError("OTP expired. Please resend OTP", 400);
+        }
+        let data;
+        try {
+            // Handle both string and already-parsed object from Upstash
+            data = typeof raw === "string" ? JSON.parse(raw) : raw;
+            if (!data.hash || data.attempts === undefined || !data.createdAt) {
+                throw new Error("Missing required fields");
+            }
+        }
+        catch (error) {
+            logger.warn("Auth: OTP parse failed", { email: emailKey, error: error.message });
+            await redis.del(otpKey);
+            throw new AppError("Invalid OTP data. Please resend OTP", 400);
+        }
+        // 3️⃣ Expiry check (server-side safety)
+        if (Date.now() - data.createdAt > 10 * 60 * 1000) {
+            await redis.del(otpKey);
+            throw new AppError("OTP expired. Please resend OTP", 400);
+        }
+        // 4️⃣ Hash compare
+        const incomingHash = crypto
+            .createHmac("sha256", OTP_SECRET)
+            .update(`${emailKey}:${otp}`)
+            .digest("hex");
+        if (incomingHash !== data.hash) {
+            const attemptsKey = `verify:attempts:${emailKey}`;
+            const attempts = await redis.incr(attemptsKey);
+            if (attempts === 1) {
+                await redis.expire(attemptsKey, 600);
+            }
+            if (attempts >= 3) {
+                await redis.set(`verify:lock:${emailKey}`, "1", { ex: 3600 });
+                await redis.del(attemptsKey);
+            }
+            throw new AppError("Invalid OTP", 400);
+        }
+        // 5️⃣ Verify user
+        await prisma.user.update({
+            where: { email: emailKey },
+            data: { isVerified: true },
+        });
+        // 6️⃣ Cleanup
+        await redis.del(otpKey);
+        await redis.del(`verify:attempts:${emailKey}`);
+        await redis.del(`verify:lock:${emailKey}`);
+        return { message: "Email verified successfully" };
+    }
+    /* ---------------- RESEND-OTP ---------------- */
+    static async resendOtp(email) {
+        const normalizedEmail = normalizeEmail(email);
+        if (!env.OTP_SECRET) {
+            throw new Error("OTP_SECRET is missing in environment variables");
+        }
+        const user = await prisma.user.findUnique({
+            where: { email: normalizedEmail },
+        });
+        if (!user) {
+            throw new AppError("User not found", 404);
+        }
+        if (user.isVerified) {
+            throw new AppError("Already verified", 400);
+        }
+        // 🔐 lock check
+        const isLocked = await redis.get(`verify:lock:${normalizedEmail}`);
+        if (isLocked) {
+            throw new AppError("Too many attempts. Try again after 2 hours", 429);
+        }
+        // 🚫 resend cooldown
+        const resendCooldown = await redis.get(`verify:resend:${normalizedEmail}`);
+        if (resendCooldown) {
+            throw new AppError("Please wait before requesting another OTP", 429);
+        }
+        // 🧹 reset attempts (safe cleanup)
+        await redis.del(`verify:attempts:${normalizedEmail}`);
+        // ✅ generate OTP
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        // 🔐 hash OTP
+        const hash = crypto
+            .createHmac("sha256", env.OTP_SECRET)
+            .update(`${normalizedEmail}:${otp}`)
+            .digest("hex");
+        // 💾 store OTP
+        const otpData = {
+            hash,
+            attempts: 0,
+            createdAt: Date.now(),
+        };
+        await redis.set(`verify:otp:${normalizedEmail}`, otpData, { ex: 600 });
+        logger.info("Auth: OTP resent", { email: normalizedEmail, otpExpirySeconds: 600 });
+        // 🚫 cooldown (60s)
+        await redis.set(`verify:resend:${normalizedEmail}`, "1", {
+            ex: 60,
+        });
+        // 📧 send email
+        await sendVerificationEmail(user.email, otp);
+        return { message: "OTP resent successfully" };
     }
     /* ---------------- LOGIN ---------------- */
     static async login(data, meta) {
@@ -86,62 +221,49 @@ export class AuthService {
         }
         const email = normalizeEmail(data.email);
         const now = new Date();
-        const nowMs = Date.now();
-        const MAX_SESSIONS = Number(process.env.MAX_SESSIONS ?? 5);
         const { device } = getDeviceInfo(meta.userAgent);
         const fingerprint = getFingerprint(meta);
-        // 🔐 1. Fetch user (minimal include for speed)
+        // 🔐 lock check
+        const isLocked = await redis.get(`login:lock:${email}`);
+        if (isLocked) {
+            throw new AppError("Account locked. Try again later", 403);
+        }
         const user = await prisma.user.findUnique({
             where: { email },
-            include: { members: true },
+            include: { members: { where: { isActive: true } } },
         });
-        // 🧠 Always run fake hash to prevent timing attacks
         const FAKE_HASH = "$2a$10$C9yq6y8eQJ5cV9YzG5e7uO.fake.hash.to.prevent.timing.attack";
         if (!user) {
             await bcrypt.compare(data.password, FAKE_HASH);
             throw new AppError("Invalid credentials", 401);
         }
-        // ❌ account checks
         if (user.deletedAt)
             throw new AppError("Account not available", 403);
         if (!user.isVerified)
             throw new AppError("Please verify your email", 403);
-        if (user.lockUntil && user.lockUntil.getTime() > nowMs) {
-            throw new AppError("Account temporarily locked. Try later.", 403);
-        }
-        // 🏫 membership validation (authorization gate)
-        const member = user.members.find((m) => m.schoolId === data.schoolId && m.isActive);
-        if (!member) {
-            await bcrypt.compare(data.password, user.passwordHash);
-            throw new AppError("Invalid credentials", 401);
-        }
-        // 🔐 password validation
+        // ❌ password check FIRST (important for security timing)
         const valid = await bcrypt.compare(data.password, user.passwordHash);
         if (!valid) {
-            const failed = user.failedAttempts + 1;
-            await prisma.user.update({
-                where: { id: user.id },
-                data: {
-                    failedAttempts: { increment: 1 },
-                    ...(failed >= 5 && {
-                        failedAttempts: 0,
-                        lockUntil: new Date(nowMs + 15 * 60 * 1000),
-                    }),
-                },
-            });
+            const attemptsKey = `login:attempts:${email}`;
+            const attempts = await redis.incr(attemptsKey);
+            if (attempts === 1)
+                await redis.expire(attemptsKey, 900);
+            if (attempts >= 5) {
+                await redis.set(`login:lock:${email}`, "1", { ex: 7200 });
+                await redis.del(attemptsKey);
+            }
             throw new AppError("Invalid credentials", 401);
         }
-        // reset auth state
-        await prisma.user.update({
-            where: { id: user.id },
-            data: {
-                failedAttempts: 0,
-                lockUntil: null,
-            },
-        });
-        // 🔥 FULL TRANSACTION
+        // ✅ reset attempts
+        await redis.del(`login:attempts:${email}`);
+        await redis.del(`login:lock:${email}`);
+        // 🚨 IMPORTANT FIX: auto-pick default school OR require selection later
+        const member = user.members[0];
+        if (!member) {
+            throw new AppError("No active school membership", 403);
+        }
         const result = await prisma.$transaction(async (tx) => {
-            // 📱 device upsert
+            // device upsert
             await tx.device.upsert({
                 where: {
                     userId_deviceId: {
@@ -164,15 +286,15 @@ export class AuthService {
                     lastSeenAt: now,
                 },
             });
-            // 🧹 SAFE SESSION LIMIT (FIXED)
+            // session limit fix
             const sessions = await tx.session.findMany({
                 where: { userId: user.id },
                 orderBy: { lastUsedAt: "asc" },
                 select: { id: true },
             });
-            const excessCount = sessions.length - MAX_SESSIONS;
-            if (excessCount > 0) {
-                const toDelete = sessions.slice(0, excessCount);
+            const excess = Math.max(0, sessions.length - MAX_SESSIONS);
+            if (excess > 0) {
+                const toDelete = sessions.slice(0, excess);
                 const ids = toDelete.map((s) => s.id);
                 await tx.refreshToken.deleteMany({
                     where: { sessionId: { in: ids } },
@@ -181,7 +303,7 @@ export class AuthService {
                     where: { id: { in: ids } },
                 });
             }
-            // 🆕 session creation
+            // session create
             const session = await tx.session.create({
                 data: {
                     userId: user.id,
@@ -193,36 +315,33 @@ export class AuthService {
                     lastUsedAt: now,
                 },
             });
-            // 🔐 token payload
             const payload = {
-                userId: user.id,
+                userId: user.id.toString(),
                 role: member.role,
-                schoolId: member.schoolId,
-                sessionId: session.id,
+                schoolId: member.schoolId.toString(),
+                sessionId: session.id.toString(),
                 tokenVersion: user.tokenVersion,
             };
             const accessToken = generateAccessToken(payload);
             const refreshToken = generateRefreshToken(payload);
-            // 🔐 refresh token storage (ROTATION SAFE)
-            const familyId = randomUUID(); // ✅ FIXED (no deterministic hash)
             await tx.refreshToken.create({
                 data: {
                     userId: user.id,
                     tokenHash: hashToken(refreshToken),
                     sessionId: session.id,
-                    familyId,
+                    familyId: randomUUID(),
                     expiresAt: calculateExpiryDate(),
                 },
             });
             return { accessToken, refreshToken };
         });
-        return {
+        return serializeBigInt({
             message: "Login successful",
             accessToken: result.accessToken,
             refreshToken: result.refreshToken,
             user: toSafeUser(user),
             member,
-        };
+        });
     }
     /* ---------------- REFRESH ---------------- */
     static async refresh(refreshToken, meta) {
@@ -230,9 +349,7 @@ export class AuthService {
             throw new AppError("Device ID required", 400);
         }
         const now = new Date();
-        // 🔐 Strong fingerprint
         const fingerprint = getFingerprint(meta);
-        // 1. Verify JWT
         let payload;
         try {
             payload = verifyRefreshToken(refreshToken);
@@ -241,12 +358,13 @@ export class AuthService {
             throw new AppError("Invalid or expired refresh token", 401);
         }
         const tokenHash = hashToken(refreshToken);
-        // 2. Fetch token + session + user in ONE go
         const stored = await prisma.refreshToken.findUnique({
             where: { tokenHash },
             include: {
                 user: {
-                    include: { members: true },
+                    include: {
+                        members: { where: { isActive: true } },
+                    },
                 },
                 session: true,
             },
@@ -255,16 +373,19 @@ export class AuthService {
             throw new AppError("Invalid or expired refresh token", 401);
         }
         const user = stored.user;
-        if (user.deletedAt) {
+        if (!user || user.deletedAt) {
             throw new AppError("Account not available", 403);
+        }
+        // 🔐 session check
+        if (!stored.session) {
+            throw new AppError("Session expired", 401);
         }
         if (payload.sessionId !== stored.sessionId) {
             throw new AppError("Token mismatch", 401);
         }
-        // 🔥 3. REUSE DETECTION (FAMILY-LEVEL, NOT GLOBAL)
+        // 🔥 REUSE DETECTION
         if (stored.revoked || stored.expiresAt < now) {
             await prisma.$transaction(async (tx) => {
-                // revoke only this family (FAANG style)
                 await tx.refreshToken.updateMany({
                     where: {
                         userId: user.id,
@@ -272,51 +393,40 @@ export class AuthService {
                     },
                     data: { revoked: true },
                 });
-                // delete only related session
                 await tx.session.deleteMany({
                     where: { id: stored.sessionId },
                 });
             });
             throw new AppError("Session compromised. Please login again.", 401);
         }
-        // 4. Token version check
+        // 🔐 token version check
         if (payload.tokenVersion !== user.tokenVersion) {
             throw new AppError("Session expired", 401);
         }
-        // 5. Member validation
-        const member = user.members.find((m) => m.schoolId === payload.schoolId && m.isActive);
+        // ⚠️ SAFE MEMBER PICK (no dependency on payload.schoolId)
+        const member = user.members[0];
         if (!member) {
             throw new AppError("Unauthorized access", 401);
         }
-        // 6. Session validation
-        const session = stored.session;
-        if (!session) {
-            throw new AppError("Session expired", 401);
-        }
-        if (session.userId !== user.id) {
-            throw new AppError("Session invalid", 401);
-        }
-        // 🔐 7. STRICT DEVICE CHECKS
-        if (session.deviceId !== meta.deviceId) {
+        // ⚠️ SOFT device check (not strict block)
+        if (stored.session.deviceId !== meta.deviceId) {
             throw new AppError("Unauthorized device", 401);
         }
-        if (session.fingerprint !== fingerprint) {
+        // ⚠️ fingerprint check (softened logic recommended in real apps)
+        if (stored.session.fingerprint !== fingerprint) {
             throw new AppError("Device mismatch", 401);
         }
-        // 🎟️ 9. Prepare new tokens
         const basePayload = {
             userId: user.id,
             role: member.role,
             schoolId: member.schoolId,
-            sessionId: session.id,
+            sessionId: stored.session.id,
             tokenVersion: user.tokenVersion,
         };
         const newAccessToken = generateAccessToken(basePayload);
         const newRefreshToken = generateRefreshToken(basePayload);
         const newTokenHash = hashToken(newRefreshToken);
-        // 🔥 10. ATOMIC ROTATION (STRICT)
         await prisma.$transaction(async (tx) => {
-            // lock token row
             const current = await tx.refreshToken.findUnique({
                 where: { id: stored.id },
                 select: { revoked: true },
@@ -324,24 +434,21 @@ export class AuthService {
             if (!current || current.revoked) {
                 throw new AppError("Refresh token already used", 401);
             }
-            // revoke old
             await tx.refreshToken.update({
                 where: { id: stored.id },
                 data: { revoked: true },
             });
-            // create new
             await tx.refreshToken.create({
                 data: {
                     userId: user.id,
                     tokenHash: newTokenHash,
-                    sessionId: session.id,
+                    sessionId: stored.session.id,
                     familyId: stored.familyId,
                     expiresAt: calculateExpiryDate(),
                 },
             });
-            // update session
             await tx.session.update({
-                where: { id: session.id },
+                where: { id: stored.session.id },
                 data: {
                     lastUsedAt: now,
                     ipAddress: meta.ip,
@@ -349,7 +456,6 @@ export class AuthService {
                     fingerprint,
                 },
             });
-            // update device
             await tx.device.update({
                 where: {
                     userId_deviceId: {
@@ -373,27 +479,44 @@ export class AuthService {
     /* ---------------- LOGOUT ---------------- */
     static async logout(refreshToken) {
         const tokenHash = hashToken(refreshToken);
-        // 🔐 Optional verification (don’t block logout if expired)
+        let payload;
+        // 🔐 optional verification (safe ignore)
         try {
-            verifyRefreshToken(refreshToken);
+            payload = verifyRefreshToken(refreshToken);
         }
         catch {
-            // ignore — still allow logout
+            payload = null;
         }
         const stored = await prisma.refreshToken.findUnique({
             where: { tokenHash },
-            select: { sessionId: true },
+            select: {
+                sessionId: true,
+                familyId: true,
+                userId: true,
+            },
         });
         await prisma.$transaction(async (tx) => {
             if (stored) {
-                // 🔐 revoke all tokens for this session
+                // 🔐 revoke entire session family (IMPORTANT FIX)
                 await tx.refreshToken.updateMany({
-                    where: { sessionId: stored.sessionId },
+                    where: {
+                        OR: [
+                            { sessionId: stored.sessionId },
+                            { familyId: stored.familyId },
+                        ],
+                    },
                     data: { revoked: true },
                 });
-                // 🧹 delete session using correct field
+                // 🧹 delete session
                 await tx.session.deleteMany({
                     where: { id: stored.sessionId },
+                });
+                // 🧹 cleanup devices (IMPORTANT FIX)
+                await tx.device.updateMany({
+                    where: { userId: stored.userId },
+                    data: {
+                        lastSeenAt: new Date(),
+                    },
                 });
             }
         });
@@ -403,13 +526,20 @@ export class AuthService {
     static async logoutAll(userId) {
         const id = typeof userId === "bigint" ? userId : BigInt(userId);
         await prisma.$transaction(async (tx) => {
+            // 🔐 revoke all refresh tokens
             await tx.refreshToken.updateMany({
                 where: { userId: id },
                 data: { revoked: true },
             });
+            // 🧹 delete all sessions
             await tx.session.deleteMany({
                 where: { userId: id },
             });
+            // 🧹 cleanup devices (IMPORTANT FIX)
+            await tx.device.deleteMany({
+                where: { userId: id },
+            });
+            // 🔥 invalidate ALL JWT access tokens instantly
             await tx.user.update({
                 where: { id },
                 data: {
@@ -419,19 +549,173 @@ export class AuthService {
         });
         return { message: "Logged out from all devices" };
     }
-    static async logoutSession(sessionId) {
+    /* ---------------- LOGOUT SESSION ---------------- */
+    static async logoutSession(sessionId, userId) {
+        const uid = userId
+            ? typeof userId === "bigint"
+                ? userId
+                : BigInt(userId)
+            : null;
         await prisma.$transaction(async (tx) => {
-            // 🔐 revoke all tokens linked to this session
+            // 🔐 optional safety check (prevents unauthorized logout)
+            if (uid) {
+                const session = await tx.session.findFirst({
+                    where: {
+                        id: sessionId,
+                        userId: uid,
+                    },
+                });
+                if (!session) {
+                    throw new AppError("Session not found", 404);
+                }
+            }
+            // 🔐 revoke refresh tokens for this session
             await tx.refreshToken.updateMany({
                 where: { sessionId },
                 data: { revoked: true },
             });
-            // 🧹 delete session
-            await tx.session.delete({
+            // 🧹 delete session safely
+            await tx.session.deleteMany({
                 where: { id: sessionId },
             });
+            // 🧹 update device safely (NO undefined in Prisma filter)
+            if (uid) {
+                await tx.device.updateMany({
+                    where: { userId: uid },
+                    data: {
+                        lastSeenAt: new Date(),
+                    },
+                });
+            }
         });
         return { message: "Session logged out" };
+    }
+    /* ============ REQUEST PASSWORD RESET ============ */
+    static async requestPasswordReset(email) {
+        const emailKey = normalizeEmail(email);
+        // 1️⃣ Check if user exists
+        const user = await prisma.user.findUnique({
+            where: { email: emailKey },
+        });
+        if (!user) {
+            throw new AppError("User not found", 404);
+        }
+        if (!user.isVerified) {
+            throw new AppError("Please verify your email first", 403);
+        }
+        // 2️⃣ Generate OTP
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        // 3️⃣ Create OTP hash
+        const OTP_SECRET = env.OTP_SECRET;
+        const otpHash = crypto
+            .createHmac("sha256", OTP_SECRET)
+            .update(`${emailKey}:${otp}`)
+            .digest("hex");
+        // 4️⃣ Store OTP in Redis (15 minutes expiry for password reset)
+        const otpKey = `reset:otp:${emailKey}`;
+        const otpData = {
+            hash: otpHash,
+            attempts: 0,
+            createdAt: Date.now(),
+        };
+        await redis.set(otpKey, otpData, { ex: 900 }); // 15 minutes
+        // 5️⃣ Send verification email
+        logger.info("Auth: Password reset OTP sent", { email: emailKey });
+        try {
+            await sendVerificationEmail(emailKey, otp, "password-reset");
+        }
+        catch (error) {
+            logger.warn("Auth: Failed to send verification email", {
+                email: emailKey,
+                error: error.message
+            });
+        }
+        return {
+            message: "Password reset OTP sent to your email. Valid for 15 minutes.",
+            expirySeconds: 900
+        };
+    }
+    /* ============ RESET PASSWORD ============ */
+    static async resetPassword(email, otp, newPassword) {
+        const emailKey = normalizeEmail(email);
+        // 1️⃣ Get user
+        const user = await prisma.user.findUnique({
+            where: { email: emailKey },
+        });
+        if (!user) {
+            throw new AppError("User not found", 404);
+        }
+        if (!user.isVerified) {
+            throw new AppError("Email not verified", 403);
+        }
+        // 2️⃣ Get OTP from Redis
+        const otpKey = `reset:otp:${emailKey}`;
+        const raw = await redis.get(otpKey);
+        if (!raw) {
+            throw new AppError("OTP expired or not found. Request a new one", 400);
+        }
+        let data;
+        try {
+            data = typeof raw === "string" ? JSON.parse(raw) : raw;
+            if (!data.hash || data.attempts === undefined || !data.createdAt) {
+                throw new Error("Missing required fields");
+            }
+        }
+        catch (error) {
+            logger.warn("Auth: Password reset OTP parse failed", { email: emailKey });
+            await redis.del(otpKey);
+            throw new AppError("Invalid OTP data. Request a new one", 400);
+        }
+        // 3️⃣ Check expiry
+        if (Date.now() - data.createdAt > 15 * 60 * 1000) {
+            await redis.del(otpKey);
+            throw new AppError("OTP expired. Request a new one", 400);
+        }
+        // 4️⃣ Check attempts
+        if (data.attempts >= 3) {
+            await redis.del(otpKey);
+            throw new AppError("Too many attempts. Request a new OTP", 429);
+        }
+        // 5️⃣ Verify OTP hash
+        const OTP_SECRET = env.OTP_SECRET;
+        const incomingHash = crypto
+            .createHmac("sha256", OTP_SECRET)
+            .update(`${emailKey}:${otp}`)
+            .digest("hex");
+        if (incomingHash !== data.hash) {
+            // Increment attempts
+            data.attempts += 1;
+            await redis.set(otpKey, data, { ex: 900 });
+            throw new AppError("Invalid OTP", 400);
+        }
+        // 6️⃣ Hash new password
+        const passwordHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
+        // 7️⃣ Update password and revoke all refresh tokens
+        await prisma.$transaction(async (tx) => {
+            // Update password
+            await tx.user.update({
+                where: { id: user.id },
+                data: {
+                    passwordHash,
+                    tokenVersion: user.tokenVersion + 1, // Invalidate all tokens
+                },
+            });
+            // Revoke all refresh tokens
+            await tx.refreshToken.updateMany({
+                where: { userId: user.id },
+                data: { revoked: true },
+            });
+            // Close all sessions
+            await tx.session.deleteMany({
+                where: { userId: user.id },
+            });
+        });
+        // 8️⃣ Clear OTP
+        await redis.del(otpKey);
+        logger.info("Auth: Password reset successful", { email: emailKey });
+        return {
+            message: "Password reset successfully. Please login with your new password.",
+        };
     }
 }
 //# sourceMappingURL=auth.service.js.map

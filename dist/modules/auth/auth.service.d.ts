@@ -1,52 +1,18 @@
 export declare class AuthService {
     static register(data: any): Promise<{
         message: string;
-        user: {
-            id: bigint;
-            fullName: string;
-            email: string;
-            phoneNumber: string | null;
-            createdAt: Date;
-            updatedAt: Date;
-        };
-        member: {
-            userId: bigint;
-            schoolId: bigint;
-            role: import("@prisma/client").$Enums.MemberRole;
-            id: bigint;
-            createdAt: Date;
-            updatedAt: Date;
-            deletedAt: Date | null;
-            isActive: boolean;
-        };
+    }>;
+    static verifyOtp(email: string, otp: string): Promise<{
+        message: string;
+    }>;
+    static resendOtp(email: string): Promise<{
+        message: string;
     }>;
     static login(data: any, meta: {
         ip: string;
         userAgent: string;
         deviceId: string;
-    }): Promise<{
-        message: string;
-        accessToken: string;
-        refreshToken: string;
-        user: {
-            id: bigint;
-            fullName: string;
-            email: string;
-            phoneNumber: string | null;
-            createdAt: Date;
-            updatedAt: Date;
-        };
-        member: {
-            userId: bigint;
-            schoolId: bigint;
-            role: import("@prisma/client").$Enums.MemberRole;
-            id: bigint;
-            createdAt: Date;
-            updatedAt: Date;
-            deletedAt: Date | null;
-            isActive: boolean;
-        };
-    }>;
+    }): Promise<any>;
     static refresh(refreshToken: string, meta: {
         ip: string;
         userAgent: string;
@@ -61,7 +27,14 @@ export declare class AuthService {
     static logoutAll(userId: bigint | string): Promise<{
         message: string;
     }>;
-    static logoutSession(sessionId: string): Promise<{
+    static logoutSession(sessionId: string, userId?: bigint | string): Promise<{
+        message: string;
+    }>;
+    static requestPasswordReset(email: string): Promise<{
+        message: string;
+        expirySeconds: number;
+    }>;
+    static resetPassword(email: string, otp: string, newPassword: string): Promise<{
         message: string;
     }>;
 }
