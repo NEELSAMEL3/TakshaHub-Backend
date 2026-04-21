@@ -23,3 +23,9 @@ npx prisma format
 npx prisma migrate reset
 npx prisma migrate dev
 npx prisma generate
+
+# Generate Prisma client (after fixing schema)
+npx prisma generate
+
+# Deploy migrations to Neon database
+npx prisma migrate deploy    

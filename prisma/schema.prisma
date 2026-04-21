@@ -6,8 +6,6 @@ datasource db {
   provider = "postgresql"
 }
 
---------------- USER ----------------
-
 model User {
   id           BigInt  @id @default(autoincrement())
   fullName     String  @db.VarChar(255)
@@ -31,8 +29,6 @@ model User {
   devices       Device[]
 }
 
----------------- SCHOOL ----------------
-
 model School {
   id          BigInt      @id @default(autoincrement())
   name        String      @db.VarChar(255)
@@ -53,7 +49,7 @@ model School {
 }
 
 /**
- * ---------------- MEMBER ----------------
+ * Member model
  */
 
 model Member {
@@ -77,7 +73,7 @@ model Member {
   @@index([schoolId])
 }
 
-/**-------------- SESSION ----------------✅ Updated for multi-school login/
+/** Session model - Updated for multi-school login */
 
 model Session {
   id     String @id @default(cuid())
@@ -105,8 +101,6 @@ model Session {
   @@index([memberId])
 }
 
---------------- REFRESH TOKEN ----------------
-
 model RefreshToken {
   id String @id @default(cuid())
 
@@ -128,9 +122,6 @@ model RefreshToken {
   @@index([userId, familyId])
 }
 
----------------- DEVICE ----------------
-
-
 model Device {
   id       String @id @default(cuid())
   userId   BigInt
@@ -146,8 +137,6 @@ model Device {
 
   @@unique([userId, deviceId])
 }
-
----------------- ENUMS ----------------
 
 enum MemberRole {
   ADMIN
