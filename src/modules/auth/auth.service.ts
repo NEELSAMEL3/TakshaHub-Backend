@@ -391,6 +391,8 @@ export class AuthService {
       const session = await tx.session.create({
         data: {
           userId: user.id,
+          schoolId: member.schoolId,
+          memberId: member.id,
           deviceId: meta.deviceId,
           ipAddress: meta.ip,
           userAgent: meta.userAgent,
