@@ -1,5 +1,5 @@
 // cleanup.ts
-import prisma from "../../config/prisma";
+import prisma from "../../config/prisma.js";
 
 export const cleanup = async () => {
   await prisma.refreshToken.deleteMany({

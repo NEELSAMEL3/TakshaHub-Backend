@@ -4,7 +4,7 @@
  * These helpers are intentionally specific to authentication logic and
  * are separated from shared application utilities.
  */
-import { hashToken } from "../../common/utils/jwt";
+import { hashToken } from "../../common/utils/jwt.js";
 import type { User } from "@prisma/client";
 
 const REFRESH_EXPIRES_DAYS = Number(process.env.REFRESH_DAYS ?? "7");
