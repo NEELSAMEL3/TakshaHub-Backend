@@ -1,6 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
-import { AppError } from "../errors/AppError";
-import { redis } from "../../config/redis";
+import { AppError } from "../errors/AppError.js";
+import { redis } from "../../config/redis.js";
 
 /* ============ TYPES ============ */
 

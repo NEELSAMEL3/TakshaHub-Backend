@@ -1,5 +1,5 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
-import { validate } from "../../common/middleware/validate";
+import { validate } from "../../common/middleware/validate.js";
 import {
   registerSchema,
   loginSchema,
@@ -7,20 +7,20 @@ import {
   resendOtpSchema,
   requestPasswordResetSchema,
   resetPasswordSchema,
-} from "./auth.schema";
+} from "./auth.schema.js";
 import {
   registerRateLimiter,
   loginRateLimiter,
   otpVerifyRateLimiter,
   otpResendRateLimiter,
   refreshRateLimiter,
-} from "../../common/middleware/Limiter.middleware";
+} from "../../common/middleware/Limiter.middleware.js";
 import {
   requiredAuth,
   requireSession,
-} from "../../common/middleware/requireRole.middleware";
-import { AuthController } from "./auth.controller";
-import { AppError } from "../../common/errors/AppError";
+} from "../../common/middleware/requireRole.middleware.js";
+import { AuthController } from "./auth.controller.js";
+import { AppError } from "../../common/errors/AppError.js";
 
 const router = Router();
 

@@ -1,12 +1,12 @@
 import type { Request, Response, NextFunction } from "express";
-import { AuthService } from "./auth.service";
-import logger from "../../config/logger";
-import { asyncHandler } from "../../common/utils/asyncHandler";
+import { AuthService } from "./auth.service.js";
+import logger from "../../config/logger.js";
+import { asyncHandler } from "../../common/utils/asyncHandler.js";
 import {
   clearRefreshCookie,
   setRefreshCookie,
-} from "../../common/utils/helpers";
-import { AppError } from "../../common/errors/AppError";
+} from "../../common/utils/helpers.js";
+import { AppError } from "../../common/errors/AppError.js";
 
 export class AuthController {
   /* ============ REGISTER ============ */

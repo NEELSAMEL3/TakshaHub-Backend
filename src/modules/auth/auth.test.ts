@@ -2,10 +2,10 @@ import dotenv from "dotenv";
 dotenv.config({ path: "./.env" });
 
 import request from "supertest";
-import app from "../../app";
-import prisma from "../../config/prisma";
-import { redis } from "../../config/redis";
-import env from "../../config/env";
+import app from "../../app.js";
+import prisma from "../../config/prisma.js";
+import { redis } from "../../config/redis.js";
+import env from "../../config/env.js";
 import crypto from "crypto";
 
 /* Test OTP Helper */

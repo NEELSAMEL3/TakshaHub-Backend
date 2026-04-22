@@ -1,28 +1,28 @@
-import prisma from "../../config/prisma";
+import prisma from "../../config/prisma.js";
 import bcrypt from "bcryptjs";
 import { MemberRole, Prisma } from "@prisma/client";
 import type { User } from "@prisma/client";
-import { AppError } from "../../common/errors/AppError";
+import { AppError } from "../../common/errors/AppError.js";
 import {
   generateAccessToken,
   generateRefreshToken,
   hashToken,
   verifyRefreshToken,
-} from "../../common/utils/jwt";
+} from "../../common/utils/jwt.js";
 import { randomUUID } from "crypto";
-import { getDeviceInfo } from "../../common/utils/helpers";
-import { serializeBigInt } from "../../common/utils/responseHandler";
+import { getDeviceInfo } from "../../common/utils/helpers.js";
+import { serializeBigInt } from "../../common/utils/responseHandler.js";
 import {
   normalizeEmail,
   getFingerprint,
   toSafeUser,
   calculateExpiryDate,
-} from "./auth.helpers";
+} from "./auth.helpers.js";
 import crypto from "crypto";
-import { sendVerificationEmail } from "../../common/utils/sendVerificationEmail";
-import { redis } from "../../config/redis";
-import logger from "../../config/logger";
-import env from "../../config/env";
+import { sendVerificationEmail } from "../../common/utils/sendVerificationEmail.js";
+import { redis } from "../../config/redis.js";
+import logger from "../../config/logger.js";
+import env from "../../config/env.js";
 
 const SALT_ROUNDS = Number(env.BCRYPT_ROUNDS ?? "10");
 const MAX_SESSIONS = Number(env.MAX_SESSIONS ?? "5");
