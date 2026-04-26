@@ -19,6 +19,7 @@ const envSchema = z.object({
   MAIL_USER: z.string().optional(),
   MAIL_PASSWORD: z.string().optional(),
   MAX_SESSIONS: z.string().optional(),
+  CORS_ORIGIN: z.string().optional(),
 });
 
 const env = envSchema.parse(process.env);
