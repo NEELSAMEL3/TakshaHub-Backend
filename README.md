@@ -1,11 +1,11 @@
-# TakshaHub-Backend
-
 # Application environment
 NODE_ENV=development
-PORT=3000
+PORT=5000
+HOST=0.0.0.0
+CORS_ORIGIN=http://localhost:3000
 
 # Database
-DATABASE_URL="postgresql://postgres:neelneel@localhost:5432/school_db"
+DATABASE_URL="postgresql://neondb_owner:npg_N5HYtc7OjeDx@ep-withered-rice-ao4nviu4.c-2.ap-southeast-1.aws.neon.tech/neondb?sslmode=require"
 
 # Authentication / Security
 OTP_SECRET=ekwn2382urjewew
