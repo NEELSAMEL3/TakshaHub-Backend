@@ -1,6 +1,5 @@
 import type { Response } from "express";
-import { UAParser } from "ua-parser-js"; // ✅ FIXED
-import crypto from "crypto";
+import { UAParser } from "ua-parser-js";
 
 export const setRefreshCookie = (res: Response, token: string) => {
   res.cookie("refreshToken", token, {
@@ -23,7 +22,7 @@ export const clearRefreshCookie = (res: Response) => {
 };
 
 export const getDeviceInfo = (userAgent: string) => {
-  const parser = new UAParser(userAgent); // ✅ works now
+  const parser = new UAParser(userAgent);
   const result = parser.getResult();
 
   return {
@@ -33,9 +32,4 @@ export const getDeviceInfo = (userAgent: string) => {
         : result.os.name || "Unknown Device",
     browser: result.browser.name,
   };
-};
-
-
-export const generateVerificationToken = () => {
-  return crypto.randomBytes(32).toString("hex");
 };
